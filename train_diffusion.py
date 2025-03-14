@@ -89,8 +89,7 @@ def main(args):
             dataset,
             (int(
                 0.95 * len(dataset)), len(dataset) - int(0.95 * len(dataset))))
-        print("Yoooo")
-        print(len(dataset), len(valset))
+        print("Length of training and validation datasets: ", len(dataset), len(valset))
 
         x_length = gin.query_parameter("%X_LENGTH")
         z_length = x_length // ae_ratio
