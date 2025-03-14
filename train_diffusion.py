@@ -68,7 +68,7 @@ def main(args):
     ######### GET THE DATASET #########
 
     if args.dataset_type == "waveform":
-        dataset = SimpleDataset(path=args.db_path, keys=["waveform", "z"])
+        dataset = SimpleDataset(path=args.db_path, keys=["waveform", "z", "pr"])
 
         try:
             dataset[0]["z"]
@@ -80,10 +80,17 @@ def main(args):
                 "Using on the fly AE encoding, training will be slow. Use split_to_lmdb.py with emb_model arg to precompute z"
             )
 
+        # dataset, valset = torch.utils.data.random_split(
+        #     dataset,
+        #     (len(dataset) - int(0.95 * len(dataset)), int(
+        #         0.95 * len(dataset))))
+
         dataset, valset = torch.utils.data.random_split(
             dataset,
-            (len(dataset) - int(0.95 * len(dataset)), int(
-                0.95 * len(dataset))))
+            (int(
+                0.95 * len(dataset)), len(dataset) - int(0.95 * len(dataset))))
+        print("Yoooo")
+        print(len(dataset), len(valset))
 
         x_length = gin.query_parameter("%X_LENGTH")
         z_length = x_length // ae_ratio
@@ -102,6 +109,16 @@ def main(args):
 
             i1 = np.random.randint(0, x.shape[-1] // ae_ratio - z_length,
                                    x.shape[0])
+
+            # added space to get piano roll
+            pr = [l["pr"] for l in L]
+            pr = map(normalize, pr)
+            pr = np.stack(list(pr))
+            pr = pr > 0 # if velocity is a little bit active, set to 1 instead
+            pr = torch.from_numpy(pr).float()
+
+            pr = torch.stack(
+                [xc[..., i:i + x_length // ae_ratio] for i, xc in zip(i0, pr)])
 
             x_diff = torch.stack([
                 xc[..., i * ae_ratio:i * ae_ratio + x_length]
@@ -126,6 +143,7 @@ def main(args):
                 "x": z_diff,
                 "x_time_cond": x_diff,
                 "x_toz": x_toz,
+                "pr": pr,
             }
 
     elif args.dataset_type == "midi":
@@ -134,6 +152,7 @@ def main(args):
             dataset,
             (len(dataset) - int(0.95 * len(dataset)), int(
                 0.95 * len(dataset))))
+
 
         x_length = gin.query_parameter("%X_LENGTH")
 
