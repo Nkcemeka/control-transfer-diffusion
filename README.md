@@ -10,6 +10,9 @@ We are currently working on a real-time implementation of this model called AFTE
 ## Python Version
 The python version used for training is Python3.10 (in case you get any conflicts)
 
+## Config
+The config I recommend you use is stored in diffusion/configs as config.gin. This allows you to train the entire pipeline with the pitch conditioning.
+
 
 ## Model training
 
