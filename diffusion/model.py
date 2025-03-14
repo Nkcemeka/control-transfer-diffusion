@@ -1,6 +1,6 @@
 #EDM Diffusion was adapted from the official implementation https://github.com/NVlabs/edm
-
-from typing import Callable, Optional
+import librosa
+from typing import Callable, Optional, Tuple
 import numpy as np
 import torch
 from torch import nn
@@ -12,7 +12,7 @@ import numpy as np
 import gin
 from torch_ema import ExponentialMovingAverage
 import os
-
+from basic_pitch.inference import predict
 
 @gin.configurable
 class Base(nn.Module):
@@ -44,6 +44,9 @@ class Base(nn.Module):
 
         self.time_cond_drop = drop_values[0]
         self.zsem_drop = drop_values[1]
+
+        # Define Pitch Conditioning Loss
+        self.pc_loss = torch.nn.BCEWithLogitsLoss()
 
     @property
     def device(self):
@@ -126,9 +129,45 @@ class Base(nn.Module):
         print("init done")
         return dataloader
 
+    def get_noisy_label_for_codec(self, signal, sample_rate):
+        """Function to generate noisy label for audio codec using the pretrained Basic Pitch model.
+
+        Parameters
+        ----------
+        signal : torch.Tensor
+            Audio signal tensor
+        sample_rate : int
+            Sample rate of the audio signal
+        """
+        duration = 5.4613333333333333333333333333333333333333333333333333333333333333333333333333
+        codec_rate = 46.875 
+        num_samples = int(duration * codec_rate)
+        n_notes = 128
+        label = torch.zeros(num_samples, n_notes, dtype=torch.float32)
+        midi_offset = 0
+
+        _, midi_data, _ = predict(signal.squeeze().squeeze().detach().cpu().numpy(), sample_rate=sample_rate)
+        #midi_data.write("abc.mid")
+
+        for instrument in midi_data.instruments:
+            if not instrument.is_drum:
+                for note in instrument.notes:
+                    note_start = librosa.time_to_samples(note.start, sr=codec_rate)
+                    note_end = librosa.time_to_samples(note.end, sr=codec_rate)
+                    pitch_index = note.pitch - midi_offset
+                    assert pitch_index >= 0, f'Pitch index is negative: {note.pitch}'
+
+                    assert note_end >= note_start, "End sample must be later than start sample!"
+                    if note_start == note_end:
+                        note_end = note_end + 1
+                    label[note_start:note_end, pitch_index] = 1
+
+        return label
+    
+
     @gin.configurable
     @torch.no_grad()
-    def prep_data(self, batch, device=None):
+    def prep_data(self, batch, device=None, flag=True):
 
         x1 = batch["x"].to(device)
         x1_toz = batch["x_toz"].to(device)
@@ -152,7 +191,18 @@ class Base(nn.Module):
                                                         size=(x1.shape[-1]),
                                                         mode="nearest")
 
-        return x1, x1_toz, time_cond, None, None
+        # get noisy labels
+        #if flag:
+        #    noisy_labels = torch.stack([
+        #            self.get_noisy_label_for_codec(signal, 24000) for signal in x1_time_cond
+        #        ]) if self.step >= self.warmup_classifier else torch.tensor(0)
+        #else:
+        #    noisy_labels = torch.tensor(0)
+
+        gt_labels = batch["pr"].to(device)
+        gt_labels = gt_labels.transpose(-1, -2) # transpose the labels to right order
+        #noisy_labels = noisy_labels.to("cuda" if torch.cuda.is_available() else "cpu")
+        return x1, x1_toz, time_cond, None, None, gt_labels
 
     def encode(self, x: torch.Tensor):
         #assert self.encoder is not None
@@ -232,7 +282,7 @@ class Base(nn.Module):
 
         for e in range(n_epochs):
             for batch in dataloader:
-                x1, x1_toz, time_cond, cond, time_cond_add = self.prep_data(
+                x1, x1_toz, time_cond, cond, time_cond_add, gt_labels = self.prep_data(
                     batch, device=device)
 
                 if x1_toz is not None:
@@ -249,12 +299,13 @@ class Base(nn.Module):
 
                 if self.encoder_time is not None:
                     if self.train_encoder_time:
-                        time_cond = self.encoder_time(time_cond)
+                        time_cond, pitch_preds = self.encoder_time(time_cond)
                     else:
                         with torch.no_grad():
-                            time_cond = self.encoder_time(time_cond)
+                            time_cond, pitch_preds = self.encoder_time(time_cond)
                 else:
                     time_cond = time_cond
+                    pitch_preds = None
 
                 if guidance > 0:
                     time_cond_drop = self.cfgdrop([time_cond], guidance,
@@ -277,7 +328,7 @@ class Base(nn.Module):
                                               time_cond=time_cond_full,
                                               zsem=zsem,
                                               time_cond_true=time_cond,
-                                              zsem_true=zsem)
+                                              zsem_true=zsem, labels=(gt_labels, pitch_preds))
                 #context = time_cond_add if use_context == True else None)
 
                 if self.use_ema:
@@ -307,8 +358,8 @@ class Base(nn.Module):
                             ## Validation
                             lossval = {}
                             for i, batch in enumerate(validloader):
-                                x1, x1_toz, time_cond, cond, time_cond_add = self.prep_data(
-                                    batch, device=self.device)
+                                x1, x1_toz, time_cond, cond, time_cond_add, gt_labels = self.prep_data(
+                                    batch, device=self.device, flag=False)
 
                                 if x1_toz is not None:
                                     zsem = self.encoder(
@@ -320,9 +371,15 @@ class Base(nn.Module):
                                 if cond is not None:
                                     zsem = torch.cat((zsem, cond), -1)
 
-                                time_cond = self.encoder_time(
-                                    time_cond
-                                ) if self.encoder_time is not None else time_cond
+                                if self.encoder_time is not None:
+                                    time_cond, pitch_preds = self.encoder_time(time_cond)
+                                else:
+                                    time_cond = time_cond
+                                    pitch_pred = None
+
+                                #time_cond = self.encoder_time(
+                                #    time_cond
+                                #) if self.encoder_time is not None else time_cond
 
                                 #time_cond = time_cond[..., time_cond.shape[-1]//4:-time_cond.shape[-1]//4]
 
@@ -332,7 +389,7 @@ class Base(nn.Module):
 
                                 lossdict = self.valid_step(x1,
                                                            time_cond=time_cond,
-                                                           zsem=zsem)
+                                                           zsem=zsem, labels=(gt_labels, pitch_preds))
 
                                 for k in lossdict:
                                     lossval[k] = lossval.get(k,
@@ -349,8 +406,8 @@ class Base(nn.Module):
                             with ema.average_parameters():
                                 lossval = {}
                                 for i, batch in enumerate(validloader):
-                                    x1, x1_toz, time_cond, cond, time_cond_add = self.prep_data(
-                                        batch, device=self.device)
+                                    x1, x1_toz, time_cond, cond, time_cond_add, gt_labels = self.prep_data(
+                                        batch, device=self.device, flag=False)
 
                                     if x1_toz is not None:
                                         zsem = self.encoder(
@@ -361,17 +418,23 @@ class Base(nn.Module):
 
                                     if cond is not None:
                                         zsem = torch.cat((zsem, cond), -1)
+                                    
+                                    if self.encoder_time is not None:
+                                        time_cond, pitch_preds = self.encoder_time(time_cond)
+                                    else:
+                                        time_cond = time_cond
+                                        pitch_pred = None
 
-                                    time_cond = self.encoder_time(
-                                        time_cond
-                                    ) if self.encoder_time is not None else time_cond
+                                   # time_cond, pitch_preds = self.encoder_time(
+                                   #     time_cond
+                                   # ) if self.encoder_time is not None else time_cond, None
 
                                     if time_cond_add is not None:
                                         time_cond = torch.cat(
                                             (time_cond, time_cond_add), 1)
 
                                     lossdict = self.valid_step(
-                                        x1, time_cond=time_cond, zsem=zsem)
+                                        x1, time_cond=time_cond, zsem=zsem, labels=(gt_labels, pitch_preds))
 
                                     for k in lossdict:
                                         lossval[k] = lossval.get(
@@ -594,7 +657,7 @@ class EDM(Base):
 
     @torch.no_grad()
     def valid_step(self, x1: torch.Tensor, time_cond: Optional[torch.Tensor],
-                   zsem: Optional[torch.Tensor]):
+                   zsem: Optional[torch.Tensor], labels: Optional[Tuple[torch.Tensor, ...]]):
         b, *_ = x1.shape
         data_shape = (b, *([1] * (len(x1.shape) - 1)))
         sigma = self._get_sigma(data_shape)
@@ -607,9 +670,20 @@ class EDM(Base):
                                 zsem=zsem)
         weight = self._get_weight(sigma)
         loss = weight * ((d - x1)**2)
+        
+        # calc. pitch loss here 
+        if labels[1] is None:
+            raise ValueError("ERROR! You must define the Structure Encoder")
+
+        if self.step >= self.warmup_classifier:
+            pitch_loss = self.pc_loss(labels[1], labels[0])
+        else:
+            pitch_loss = torch.tensor(0.)
+
+        loss = loss + pitch_loss
 
         loss = loss.mean()
-        return {"Diffusion loss": loss.item()}
+        return {"Diffusion loss (and Pitch Loss)": loss.item()}
 
     @torch.no_grad()
     def sample(self,
@@ -753,6 +827,7 @@ class EDM_ADV(EDM):
         self.p_std = p_std
         self.rho = rho
         self.sdata = sdata
+
         return
 
     def triplet_loss(self, anchor, pos, neg, margin=0.4):
@@ -773,7 +848,9 @@ class EDM_ADV(EDM):
                       time_cond: Optional[torch.Tensor],
                       time_cond_true: Optional[torch.Tensor],
                       zsem: Optional[torch.Tensor],
-                      zsem_true: Optional[torch.Tensor]) -> torch.Tensor:
+                      zsem_true: Optional[torch.Tensor],
+                      labels: Optional[Tuple[torch.Tensor, ...]]) -> torch.Tensor:
+
 
         if self.warmup_classifier > 0:
             reg_classifier = min(
@@ -808,7 +885,6 @@ class EDM_ADV(EDM):
 
             if self.step < self.warmup_classifier or self.classifier is None:
                 classifier_loss = torch.tensor(0.)
-
             else:
                 classifier_loss = torch.nn.functional.mse_loss(
                     self.classifier(time_cond_true),
@@ -824,7 +900,16 @@ class EDM_ADV(EDM):
             diffloss = weight * ((d - x1)**2)
             diffloss = diffloss.mean()
 
-            loss = diffloss - reg_classifier * classifier_loss
+            # calc. pitch loss here 
+            if labels[1] is None:
+                raise ValueError("ERROR! You must define the Structure Encoder")
+
+            if self.step >= self.warmup_classifier:
+                pitch_loss = self.pc_loss(labels[1], labels[0])
+            else:
+                pitch_loss = torch.tensor(0.)
+
+            loss = diffloss - reg_classifier * classifier_loss + pitch_loss # add pitch_loss term
 
             self.opt.zero_grad()
             self._backward(loss)
@@ -837,5 +922,6 @@ class EDM_ADV(EDM):
             return {
                 "Diffusion loss": diffloss.item(),
                 "Classifier loss": classifier_loss.item(),
+                "pitch_loss": pitch_loss.item(),
                 "Regularisation weight": reg_classifier
             }
