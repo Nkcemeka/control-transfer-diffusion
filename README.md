@@ -4,8 +4,11 @@ Official repository for  _Combining audio control and style transfer using laten
 
 This diffusion-based generative model creates new audio by blending two inputs: one audio sample that sets the style or timbre, and another input (either audio or MIDI) that defines the structure over time. In this repository, you will find instructions to train your own model as well as model checkpoints trained on the two datasets presented in the paper. 
 
+
 We are currently working on a real-time implementation of this model called AFTER. You can already experiment with a real-time version of the model in MaxMSP on the official AFTER [repository](https://github.com/acids-ircam/AFTER). 
 
+## Python Version
+The python version used for training is Python3.10 (in case you get any conflicts)
 
 
 ## Model training
