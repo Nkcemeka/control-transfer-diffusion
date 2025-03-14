@@ -12,7 +12,7 @@ import numpy as np
 import gin
 from torch_ema import ExponentialMovingAverage
 import os
-from basic_pitch.inference import predict
+#from basic_pitch.inference import predict
 
 @gin.configurable
 class Base(nn.Module):
