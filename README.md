@@ -35,6 +35,17 @@ Or to use slakh with midi processing (after downloading Slakh2100  [here](http:/
 ```bash
 python dataset/split_to_lmdb.py --input_path /path/to/slakh --output_path /path/to/slakh/out_lmdb_midi --slakh True
 ```
+However, to make things easy, I have written the command above in a bash script (edit the script to change some arguments). So, just run the following:
+---
+./extract.sh
+---
+
+To see the logs, you can copy and paste the following command:
+---
+tail -n 1 -f logextract.log
+---
+
+The process id of the above command is stored in <i>extract_pid.txt</i>
 
 ### Autoencoder training
 
@@ -61,6 +72,18 @@ To train the midi-to-audio model :
 ```bash
  python train_diffusion.py --name my_midi_audio_model  --db_path /path/to/lmdb_midi --config midi --dataset_type midi --gpu #
 ```
+
+To avoid running the above commands, you can simply call the following on the terminal:
+---
+./run.sh
+---
+
+To see your logs realtime, run:
+---
+tail -n 1 -f logfile.log
+---
+
+The process id of the above command is stored in <i>extract_pid.txt</i>
 
 ## Inference and pretrained models
 
