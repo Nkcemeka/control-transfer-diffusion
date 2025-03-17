@@ -37,12 +37,16 @@ python dataset/split_to_lmdb.py --input_path /path/to/slakh --output_path /path/
 ```
 However, to make things easy, I have written the command above in a bash script (edit the script to change some arguments). So, just run the following:
 ---
+```
 ./extract.sh
+```
 ---
 
 To see the logs, you can copy and paste the following command:
 ---
+```
 tail -n 1 -f logextract.log
+```
 ---
 
 The process id of the above command is stored in <i>extract_pid.txt</i>
@@ -75,12 +79,16 @@ To train the midi-to-audio model :
 
 To avoid running the above commands, you can simply call the following on the terminal:
 ---
+```
 ./run.sh
+```
 ---
 
 To see your logs realtime, run:
 ---
+```
 tail -n 1 -f logfile.log
+```
 ---
 
 The process id of the above command is stored in <i>extract_pid.txt</i>
