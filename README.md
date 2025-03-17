@@ -36,6 +36,7 @@ Or to use slakh with midi processing (after downloading Slakh2100  [here](http:/
 python dataset/split_to_lmdb.py --input_path /path/to/slakh --output_path /path/to/slakh/out_lmdb_midi --slakh True
 ```
 However, to make things easy, I have written the command above in a bash script (edit the script to change some arguments). So, just run the following:
+
 ---
 ```
 ./extract.sh
@@ -43,6 +44,7 @@ However, to make things easy, I have written the command above in a bash script 
 ---
 
 To see the logs, you can copy and paste the following command:
+
 ---
 ```
 tail -n 1 -f logextract.log
@@ -78,6 +80,7 @@ To train the midi-to-audio model :
 ```
 
 To avoid running the above commands, you can simply call the following on the terminal:
+
 ---
 ```
 ./run.sh
@@ -85,6 +88,7 @@ To avoid running the above commands, you can simply call the following on the te
 ---
 
 To see your logs realtime, run:
+
 ---
 ```
 tail -n 1 -f logfile.log
